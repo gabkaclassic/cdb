@@ -1,0 +1,7 @@
+files
+.venv
+test.py
+__pycache__
+*.pyc
+*.mmdb
+*.cdb
