@@ -8,6 +8,23 @@
 pip install git+https://github.com/gabkaclassic/cdb.git
 ```
 
+## Тесты
+### Установка библиотек
+```bash
+pip install pytest pytest-cov
+```
+
+### Запуск
+```bash
+pytest
+```
+
+Или, если нужен отчёт о покрытии
+
+```bash
+pytest --cov=cdb tests/
+```
+
 ## Возможности
 
 - Конвертация MMDB-файла в компактный бинарный формат
