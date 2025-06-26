@@ -10,18 +10,23 @@ def read_mmdb(
     with maxminddb.open_database(file_path) as reader:
         return list(reader)
 
+
 def cidr_to_int(cidr: str, with_broadcast: bool = True) -> int | tuple[int, int]:
     network = IPv4Network(cidr, strict=False)
-    
+
     if with_broadcast:
-        return int(IPv4Address(network.network_address)), int(IPv4Address(network.broadcast_address))
+        return int(IPv4Address(network.network_address)), int(
+            IPv4Address(network.broadcast_address)
+        )
     else:
         return int(IPv4Address(network.network_address))
+
 
 def mmdb_file_to_cdb(mmdb_path: str, cdb_path: str):
     mmdb_data = read_mmdb(mmdb_path)
     cdb_data, mapping = mmdb_to_cdb(mmdb_data)
     write_cdb(cdb_data, mapping, cdb_path)
+
 
 def mmdb_to_cdb(
     ips: list[str | IPv4Network, dict[str, dict[str, dict[str, str]]]],
@@ -94,11 +99,16 @@ def deserialize(
 
     return triples, mapping
 
+
 def sort_data(info: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
     return sorted(info, key=lambda x: (x[0], x[1]))
 
+
 def search_geo(
-    info: list[tuple[int, int, int]], ip: str | int, mapping: dict[int, tuple[str, str]], is_sorted: bool = False
+    info: list[tuple[int, int, int]],
+    ip: str | int,
+    mapping: dict[int, tuple[str, str]],
+    is_sorted: bool = False,
 ) -> tuple[str, str]:
     value = ip if isinstance(ip, int) else cidr_to_int(ip, with_broadcast=False)
     info = info if is_sorted else sort_data(info)
@@ -142,7 +152,7 @@ def merge_cdbs(
 
         del current_networks
         del current_mapping
-        
+
     return networks, mapping
 
 
@@ -154,16 +164,22 @@ def merge_cdbs_and_save(
     mapping = {}
 
     networks, mapping = merge_cdbs(*filepaths)
-    
+
     write_cdb(networks, mapping, output_path)
 
-def read_cdb(filepath: str) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
+
+def read_cdb(
+    filepath: str,
+) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File {filepath} not exists")
 
     with open(filepath, "rb") as file:
         return deserialize(file.read())
-    
-def write_cdb(ips: list[tuple[int, int, int]], mapping: dict[int, tuple[str, str]], filepath: str):
+
+
+def write_cdb(
+    ips: list[tuple[int, int, int]], mapping: dict[int, tuple[str, str]], filepath: str
+):
     with open(filepath, "wb") as file:
         file.write(serialize(ips, mapping))
