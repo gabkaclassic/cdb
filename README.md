@@ -22,27 +22,29 @@ pip install git+https://github.com/gabkaclassic/cdb.git
 
 
 ```python
-from geo_cdb import mmdb_file_to_cdb
+from cdb import mmdb_file_to_cdb
 
 mmdb_file_to_cdb("GeoLite2-City.mmdb", "data.cdb")
 ```
 ### Чтение и поиск по IP
 ```python
-from geo_cdb import read_cdb, search_geo
+from cdb import read_cdb, search_geo
 
 ips, mapping = read_cdb("data.cdb")
-print(search_geo(ips, "8.8.8.8", mapping))
+search_geo(ips, "8.8.8.8", mapping)
 ```
 ### Объединение нескольких .cdb файлов
 
 ```python
-from geo_cdb import merge_cdbs
+from cdb import merge_cdbs, merge_cdbs_and_save
 
 ips, mapping = merge_cdbs("data1.cdb", "data2.cdb")
+
+merge_cdbs_and_save("collapsed.cdb", "data1.cdb", "data2.cdb")
 ```
 ### Ручная сериализация и десериализация
 ```python
-from geo_cdb import serialize, deserialize
+from cdb import serialize, deserialize
 
 # serialize → bytes
 data = serialize(ips, mapping)
@@ -54,17 +56,18 @@ triples, map_back = deserialize(data)
 ### Конвертация ip/сети в int (CIDR → диапазон)
 
 ```python
-from geo_cdb import cidr_to_int
+from cdb import cidr_to_int
 
-print(cidr_to_int("192.168.0.0/24"))
+ip = cidr_to_int("192.168.0.2")
 
-print(cidr_to_int("192.168.0.0/24", with_broadcast=False))
+ip_from, ip_to = cidr_to_int("192.168.0.0/24", with_broadcast=False)
 ```
 ### Ручная запись/чтение .cdb файла
 
 ```python
-from geo_cdb import write_cdb, read_cdb
+from cdb import write_cdb, read_cdb
 
-write_cdb(ips, mapping, "output.cdb")
-ips2, mapping2 = read_cdb("output.cdb")
+write_cdb(networks, mapping, "output.cdb")
+
+networks, mapping = read_cdb("output.cdb")
 ```
