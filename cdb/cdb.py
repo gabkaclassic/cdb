@@ -94,12 +94,14 @@ def deserialize(
 
     return triples, mapping
 
+def sort_data(info: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    return sorted(info, key=lambda x: (x[0], x[1]))
 
 def search_geo(
-    info: list[tuple[int, int, int]], ip: str, mapping: dict[int, tuple[str, str]]
+    info: list[tuple[int, int, int]], ip: str | int, mapping: dict[int, tuple[str, str]], is_sorted: bool = False
 ) -> tuple[str, str]:
-    value = cidr_to_int(ip, with_broadcast=False)
-    info = sorted(info, key=lambda x: (x[0], x[1]))
+    value = ip if isinstance(ip, int) else cidr_to_int(ip, with_broadcast=False)
+    info = info if is_sorted else sort_data(info)
     left, right = 0, len(info) - 1
     best_match = None
 
@@ -123,17 +125,24 @@ def merge_cdbs(
 ) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
     networks = set()
     mapping = {}
+    reverse_mapping = {}
 
     for filepath in filepaths:
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"File {filepath} not exists")
+        current_networks, current_mapping = read_cdb(filepath)
+        for a, b, old_id in current_networks:
+            geo = current_mapping[old_id]
+            if geo in reverse_mapping:
+                new_id = reverse_mapping[geo]
+            else:
+                new_id = len(mapping)
+                mapping[new_id] = geo
+                reverse_mapping[geo] = new_id
 
-        with open(filepath, "rb") as file:
-            current_networks, current_mapping = deserialize(file.read())
-            mapping.update(current_mapping)
-            networks = networks.union(set(current_networks))
-            del current_networks
-            del current_mapping
+            networks.add((a, b, new_id))
+
+        del current_networks
+        del current_mapping
+        
     return networks, mapping
 
 
