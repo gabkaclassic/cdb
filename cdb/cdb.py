@@ -137,6 +137,17 @@ def merge_cdbs(
     return networks, mapping
 
 
+def merge_cdbs_and_save(
+    output_path: str,
+    *filepaths: str,
+):
+    networks = set()
+    mapping = {}
+
+    networks, mapping = merge_cdbs(*filepaths)
+    
+    write_cdb(networks, mapping, output_path)
+
 def read_cdb(filepath: str) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
     if not os.path.exists(filepath):
         raise FileNotFoundError(f"File {filepath} not exists")
@@ -145,8 +156,5 @@ def read_cdb(filepath: str) -> tuple[list[tuple[int, int, int], dict[int, tuple[
         return deserialize(file.read())
     
 def write_cdb(ips: list[tuple[int, int, int]], mapping: dict[int, tuple[str, str]], filepath: str):
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File {filepath} not exists")
-
     with open(filepath, "wb") as file:
         file.write(serialize(ips, mapping))
