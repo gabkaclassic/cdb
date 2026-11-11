@@ -35,7 +35,7 @@ def test_ip_string_input(sample_data, sample_mapping):
 def test_unsorted_data():
     data = [(30, 40, 2), (10, 20, 1), (50, 60, 3)]
     mapping = {1: ("A", "B"), 2: ("C", "D"), 3: ("E", "F")}
-    assert search_geo(data, 15, mapping) == ("A", "B")
+    assert search_geo(data, 15, mapping, is_sorted=False) == ("A", "B")
 
 
 def test_sorted_data():

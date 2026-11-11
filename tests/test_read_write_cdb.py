@@ -1,8 +1,7 @@
 import pytest
 import os
 from tempfile import NamedTemporaryFile
-from cdb import read_cdb, write_cdb
-import struct
+from cdb import CDBFormatError, read_cdb, write_cdb
 
 
 def test_read_cdb_file_not_found():
@@ -67,7 +66,7 @@ def test_read_cdb_invalid_data():
             f.write(b"invalid_data")
 
     try:
-        with pytest.raises(struct.error):
+        with pytest.raises(CDBFormatError):
             read_cdb(tmp_path)
     finally:
         os.unlink(tmp_path)

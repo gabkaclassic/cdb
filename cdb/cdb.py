@@ -1,12 +1,39 @@
-import os
 import struct
+from collections.abc import Iterable
+from ipaddress import IPv4Address, IPv4Network, IPv6Network
+from typing import Any
+
 import maxminddb
-from ipaddress import IPv4Address, IPv4Network
+
+__all__ = [
+    "CDBFormatError",
+    "MAGIC",
+    "cidr_to_int",
+    "deserialize",
+    "merge_cdbs",
+    "merge_cdbs_and_save",
+    "mmdb_file_to_cdb",
+    "mmdb_to_cdb",
+    "read_cdb",
+    "read_mmdb",
+    "search_geo",
+    "serialize",
+    "sort_data",
+    "write_cdb",
+]
+
+MAGIC = b"CDB\x02"
+
+Triple = tuple[int, int, int]
+Mapping = dict[int, tuple[str, str]]
+MmdbRecord = tuple[str | IPv4Network | IPv6Network, dict[str, Any]]
 
 
-def read_mmdb(
-    file_path: str,
-) -> list[tuple[str | IPv4Network, dict[str, dict[str, dict[str, str]]]]]:
+class CDBFormatError(ValueError):
+    pass
+
+
+def read_mmdb(file_path: str) -> list[MmdbRecord]:
     with maxminddb.open_database(file_path) as reader:
         return list(reader)
 
@@ -22,93 +49,110 @@ def cidr_to_int(cidr: str, with_broadcast: bool = True) -> int | tuple[int, int]
         return int(IPv4Address(network.network_address))
 
 
-def mmdb_file_to_cdb(mmdb_path: str, cdb_path: str):
-    mmdb_data = read_mmdb(mmdb_path)
-    cdb_data, mapping = mmdb_to_cdb(mmdb_data)
+def mmdb_file_to_cdb(mmdb_path: str, cdb_path: str, locale: str = "en") -> None:
+    with maxminddb.open_database(mmdb_path) as reader:
+        cdb_data, mapping = mmdb_to_cdb(reader, locale=locale)
     write_cdb(cdb_data, mapping, cdb_path)
 
 
+def _name(section: dict[str, Any], locale: str) -> str:
+    names = section.get("names", {})
+    return names.get(locale) or names.get("en") or section.get("iso_code", "")
+
+
 def mmdb_to_cdb(
-    ips: list[str | IPv4Network, dict[str, dict[str, dict[str, str]]]],
-    mapping: dict[tuple[str, str], int] = None,
-) -> tuple[list[tuple[int, int, int]], dict[int, tuple[str, str]]]:
+    ips: Iterable[MmdbRecord],
+    mapping: dict[tuple[str, str], int] | None = None,
+    locale: str = "en",
+) -> tuple[list[Triple], Mapping]:
     prepared = []
-    mapping = mapping or {}
+    mapping = dict(mapping or {})
+    next_id = max(mapping.values(), default=-1) + 1
 
     for ip, data in ips:
+        if isinstance(ip, IPv6Network) or (isinstance(ip, str) and ":" in ip):
+            continue
+
         geo = (
-            list(data.get("country", {}).get("names", {}).values())[0],
-            list(data.get("city", {}).get("names", {}).values())[0],
+            _name(data.get("country", {}), locale),
+            _name(data.get("city", {}), locale),
         )
 
-        if geo in mapping:
-            geo_code = mapping.get(geo)
-        else:
-            geo_code = len(mapping)
-            mapping[geo] = geo_code
-        prepared.append(
-            (
-                *cidr_to_int(ip),
-                geo_code,
-            )
-        )
+        if geo not in mapping:
+            mapping[geo] = next_id
+            next_id += 1
+        prepared.append((*cidr_to_int(str(ip)), mapping[geo]))
 
+    prepared.sort()
     return prepared, {v: k for k, v in mapping.items()}
 
 
-def serialize(
-    triples: list[tuple[int, int, int]], mapping: dict[int, tuple[str, str]]
-) -> bytes:
-    parts = [struct.pack("<I", len(triples))]
-    for a, b, c in triples:
-        parts.append(struct.pack("<qqq", a, b, c))
-    parts.append(struct.pack("<I", len(mapping)))
-    for v, (s1, s2) in mapping.items():
-        b1, b2 = s1.encode(), s2.encode()
-        parts.append(struct.pack("<q", v))
-        parts.append(struct.pack("<H", len(b1)) + b1)
-        parts.append(struct.pack("<H", len(b2)) + b2)
+def serialize(triples: Iterable[Triple], mapping: Mapping) -> bytes:
+    ordered = sorted(triples)
+    try:
+        parts = [MAGIC, struct.pack("<I", len(ordered))]
+        for a, b, c in ordered:
+            parts.append(struct.pack("<III", a, b, c))
+        parts.append(struct.pack("<I", len(mapping)))
+        for geo_id, (country, city) in sorted(mapping.items()):
+            b1, b2 = country.encode(), city.encode()
+            parts.append(struct.pack("<I", geo_id))
+            parts.append(struct.pack("<H", len(b1)) + b1)
+            parts.append(struct.pack("<H", len(b2)) + b2)
+    except struct.error as e:
+        raise ValueError(str(e)) from e
     return b"".join(parts)
 
 
-def deserialize(
-    buf: bytes,
-) -> tuple[list[tuple[int, int, int]], dict[int, tuple[str, str]]]:
-    off = 0
-    (n,) = struct.unpack_from("<I", buf, off)
-    off += 4
-    triples = []
-    for _ in range(n):
-        triples.append(tuple(struct.unpack_from("<qqq", buf, off)))
-        off += 24
-    (m,) = struct.unpack_from("<I", buf, off)
-    off += 4
-    mapping = {}
-    for _ in range(m):
-        (k,) = struct.unpack_from("<q", buf, off)
-        off += 8
-        (l1,) = struct.unpack_from("<H", buf, off)
-        off += 2
-        s1 = buf[off : off + l1].decode()
-        off += l1
-        (l2,) = struct.unpack_from("<H", buf, off)
-        off += 2
-        s2 = buf[off : off + l2].decode()
-        off += l2
-        mapping[k] = (s1, s2)
+def _read_string(buf: bytes, off: int) -> tuple[str, int]:
+    (length,) = struct.unpack_from("<H", buf, off)
+    off += 2
+    raw = buf[off : off + length]
+    if len(raw) != length:
+        raise CDBFormatError("truncated string")
+    return raw.decode(), off + length
 
+
+def deserialize(buf: bytes) -> tuple[list[Triple], Mapping]:
+    if buf[:4] != MAGIC:
+        raise CDBFormatError("bad magic")
+    try:
+        off = 4
+        (n,) = struct.unpack_from("<I", buf, off)
+        off += 4
+        if off + 12 * n > len(buf):
+            raise CDBFormatError("truncated ranges")
+        triples = []
+        for _ in range(n):
+            triples.append(struct.unpack_from("<III", buf, off))
+            off += 12
+        (m,) = struct.unpack_from("<I", buf, off)
+        off += 4
+        mapping = {}
+        for _ in range(m):
+            (geo_id,) = struct.unpack_from("<I", buf, off)
+            off += 4
+            country, off = _read_string(buf, off)
+            city, off = _read_string(buf, off)
+            mapping[geo_id] = (country, city)
+    except struct.error as e:
+        raise CDBFormatError("truncated data") from e
+    except UnicodeDecodeError as e:
+        raise CDBFormatError("invalid utf-8") from e
+    if off != len(buf):
+        raise CDBFormatError("trailing bytes")
     return triples, mapping
 
 
-def sort_data(info: list[tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+def sort_data(info: list[Triple]) -> list[Triple]:
     return sorted(info, key=lambda x: (x[0], x[1]))
 
 
 def search_geo(
-    info: list[tuple[int, int, int]],
+    info: list[Triple],
     ip: str | int,
-    mapping: dict[int, tuple[str, str]],
-    is_sorted: bool = False,
+    mapping: Mapping,
+    is_sorted: bool = True,
 ) -> tuple[str, str]:
     value = ip if isinstance(ip, int) else cidr_to_int(ip, with_broadcast=False)
     info = info if is_sorted else sort_data(info)
@@ -130,9 +174,7 @@ def search_geo(
     return mapping.get(best_match, ("Unknown", "Unknown"))
 
 
-def merge_cdbs(
-    *filepaths: str,
-) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
+def merge_cdbs(*filepaths: str) -> tuple[list[Triple], Mapping]:
     networks = set()
     mapping = {}
     reverse_mapping = {}
@@ -150,36 +192,19 @@ def merge_cdbs(
 
             networks.add((a, b, new_id))
 
-        del current_networks
-        del current_mapping
-
-    return networks, mapping
+    return sorted(networks), mapping
 
 
-def merge_cdbs_and_save(
-    output_path: str,
-    *filepaths: str,
-):
-    networks = set()
-    mapping = {}
-
+def merge_cdbs_and_save(output_path: str, *filepaths: str) -> None:
     networks, mapping = merge_cdbs(*filepaths)
-
     write_cdb(networks, mapping, output_path)
 
 
-def read_cdb(
-    filepath: str,
-) -> tuple[list[tuple[int, int, int], dict[int, tuple[str, str]]]]:
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(f"File {filepath} not exists")
-
+def read_cdb(filepath: str) -> tuple[list[Triple], Mapping]:
     with open(filepath, "rb") as file:
         return deserialize(file.read())
 
 
-def write_cdb(
-    ips: list[tuple[int, int, int]], mapping: dict[int, tuple[str, str]], filepath: str
-):
+def write_cdb(ips: Iterable[Triple], mapping: Mapping, filepath: str) -> None:
     with open(filepath, "wb") as file:
         file.write(serialize(ips, mapping))

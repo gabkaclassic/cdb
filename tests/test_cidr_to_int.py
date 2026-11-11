@@ -57,3 +57,8 @@ def test_network_address_calculation():
 def test_return_types():
     assert isinstance(cidr_to_int("10.0.0.0/8", True), tuple)
     assert isinstance(cidr_to_int("10.0.0.0/8", False), int)
+
+
+def test_ipv6_cidr_raises():
+    with pytest.raises(ValueError):
+        cidr_to_int("2001:db8::/32")
