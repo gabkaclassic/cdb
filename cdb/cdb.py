@@ -60,6 +60,16 @@ def _name(section: dict[str, Any], locale: str) -> str:
     return names.get(locale) or names.get("en") or section.get("iso_code", "")
 
 
+def _coalesce(ordered: list[Triple]) -> list[Triple]:
+    merged: list[Triple] = []
+    for start, end, geo in ordered:
+        if merged and merged[-1][2] == geo and merged[-1][1] + 1 == start:
+            merged[-1] = (merged[-1][0], end, geo)
+        else:
+            merged.append((start, end, geo))
+    return merged
+
+
 def mmdb_to_cdb(
     ips: Iterable[MmdbRecord],
     mapping: dict[tuple[str, str], int] | None = None,
@@ -83,8 +93,7 @@ def mmdb_to_cdb(
             next_id += 1
         prepared.append((*cidr_to_int(str(ip)), mapping[geo]))
 
-    prepared.sort()
-    return prepared, {v: k for k, v in mapping.items()}
+    return _coalesce(sorted(prepared)), {v: k for k, v in mapping.items()}
 
 
 def serialize(triples: Iterable[Triple], mapping: Mapping) -> bytes:

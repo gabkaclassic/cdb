@@ -174,3 +174,59 @@ def test_read_mmdb(monkeypatch):
     records = [AU, PRIVATE]
     patch_open(monkeypatch, records)
     assert read_mmdb("ignored") == records
+
+
+def _rec(net, country):
+    return (net, {"country": {"names": {"en": country}}})
+
+
+def test_coalesce_adjacent_same_geo():
+    triples, _ = mmdb_to_cdb([_rec("10.0.0.0/25", "A"), _rec("10.0.0.128/25", "A")])
+    assert triples == [(167772160, 167772415, 0)]
+
+
+def test_coalesce_chain_of_three():
+    triples, _ = mmdb_to_cdb(
+        [_rec("10.0.0.0/25", "A"), _rec("10.0.0.128/25", "A"), _rec("10.0.1.0/24", "A")]
+    )
+    assert triples == [(167772160, 167772671, 0)]
+
+
+def test_no_coalesce_with_gap():
+    triples, _ = mmdb_to_cdb([_rec("10.0.0.0/25", "A"), _rec("10.0.1.0/25", "A")])
+    assert len(triples) == 2
+
+
+def test_no_coalesce_different_geo():
+    triples, _ = mmdb_to_cdb([_rec("10.0.0.0/25", "A"), _rec("10.0.0.128/25", "B")])
+    assert len(triples) == 2
+
+
+def test_coalesce_unsorted_input():
+    triples, _ = mmdb_to_cdb(
+        [_rec("10.0.1.0/24", "A"), _rec("10.0.0.128/25", "A"), _rec("10.0.0.0/25", "A")]
+    )
+    assert triples == [(167772160, 167772671, 0)]
+
+
+def test_coalesce_boundary_lookups_unchanged():
+    nets = ["10.0.0.0/25", "10.0.0.128/25", "10.0.1.0/24", "10.0.3.0/24"]
+    triples, mapping = mmdb_to_cdb([_rec(n, "A") for n in nets])
+    raw = sorted(
+        (int(IPv4Network(n).network_address), int(IPv4Network(n).broadcast_address), 0)
+        for n in nets
+    )
+    assert len(triples) == 2
+    probes = []
+    for n in nets:
+        net = IPv4Network(n)
+        probes += [
+            net.network_address,
+            net.broadcast_address,
+            net.broadcast_address + 1,
+            net.network_address - 1,
+        ]
+    for ip in probes:
+        assert search_geo(triples, str(ip), mapping) == search_geo(
+            raw, str(ip), mapping
+        )
