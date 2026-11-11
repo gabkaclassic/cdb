@@ -130,9 +130,21 @@ def test_iso_only_record():
     assert data == [(0, 2**24 - 1, 0)]
 
 
-def test_no_country_key():
-    _, mapping = mmdb_to_cdb([("1.0.0.0/24", {})])
-    assert mapping == {0: ("", "")}
+def test_no_country_key_skipped():
+    data, mapping = mmdb_to_cdb([("1.0.0.0/24", {})])
+    assert data == []
+    assert mapping == {}
+
+
+def test_non_geo_records_skipped():
+    records = [
+        ("1.0.0.0/24", {"registered_country": {"names": {"en": "X"}}}),
+        (IPv4Network("2.0.0.0/24"), {"continent": {"code": "EU"}}),
+        AU,
+    ]
+    data, mapping = mmdb_to_cdb(records)
+    assert len(data) == 1
+    assert mapping == {0: ("Australia", "")}
 
 
 def test_locale_de():

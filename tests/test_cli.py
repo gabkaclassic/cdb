@@ -80,6 +80,25 @@ def test_invalid_ip(cdb_file, capsys):
     assert capsys.readouterr().err.startswith("cdb: ")
 
 
+@pytest.mark.parametrize("bad", ["8.8.8.8/8", "::1"])
+def test_lookup_rejects_non_ipv4(cdb_file, capsys, bad):
+    assert main(["lookup", cdb_file, "10.1.2.3", bad]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith("cdb: ")
+    assert captured.out == ""
+
+
+def test_merge_dangling_geo_id(cdb_file, tmp_path, capsys):
+    dangling = tmp_path / "dangling.cdb"
+    write_cdb([(1, 2, 9)], {0: ("A", "B")}, str(dangling))
+    out = tmp_path / "out.cdb"
+    assert main(["merge", str(out), cdb_file, str(dangling)]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.startswith("cdb: ")
+    assert str(dangling) in captured.err
+    assert not out.exists()
+
+
 def test_no_subcommand():
     with pytest.raises(SystemExit) as exc:
         main([])

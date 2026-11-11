@@ -3,6 +3,7 @@ import cdb
 EXPECTED = {
     "CDBFormatError",
     "MAGIC",
+    "VERSION",
     "cidr_to_int",
     "deserialize",
     "merge_cdbs",

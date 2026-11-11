@@ -1,6 +1,8 @@
 import struct
 import pytest
-from cdb import MAGIC, CDBFormatError, serialize, deserialize
+from cdb import MAGIC, VERSION, CDBFormatError, serialize, deserialize
+
+HEADER = MAGIC + bytes([VERSION])
 
 
 @pytest.mark.parametrize(
@@ -25,7 +27,7 @@ def test_serialize_format():
     mapping = {4: ("test", "data")}
     buf = serialize(triples, mapping)
 
-    assert buf[:4] == MAGIC
+    assert buf[:4] == HEADER
     (n,) = struct.unpack_from("<I", buf, 4)
     assert n == len(triples)
 
@@ -43,7 +45,7 @@ def test_deserialize_invalid_data():
         deserialize(b"invalid")
 
     with pytest.raises(CDBFormatError):
-        deserialize(MAGIC + struct.pack("<I", 1))
+        deserialize(HEADER + struct.pack("<I", 1))
 
 
 def test_empty_strings_in_mapping():
@@ -78,7 +80,7 @@ def test_trailing_byte_raises():
 
 
 def test_invalid_utf8_raises():
-    buf = MAGIC + struct.pack("<I", 0) + struct.pack("<I", 1)
+    buf = HEADER + struct.pack("<I", 0) + struct.pack("<I", 1)
     buf += struct.pack("<I", 0) + struct.pack("<H", 1) + b"\xff" + struct.pack("<H", 0)
     with pytest.raises(CDBFormatError):
         deserialize(buf)
@@ -90,7 +92,7 @@ def test_v1_bytes_raise():
 
 
 def test_declared_string_length_past_end():
-    buf = MAGIC + struct.pack("<I", 0) + struct.pack("<I", 1)
+    buf = HEADER + struct.pack("<I", 0) + struct.pack("<I", 1)
     buf += struct.pack("<I", 0) + struct.pack("<H", 100) + b"ab"
     with pytest.raises(CDBFormatError):
         deserialize(buf)
@@ -121,3 +123,42 @@ def test_serialize_sorts_input():
     triples, mapped = deserialize(expected)
     assert triples == ordered
     assert list(mapped) == [0, 1]
+
+
+def test_bad_magic():
+    with pytest.raises(CDBFormatError, match="bad magic"):
+        deserialize(b"XYZ\x02" + b"\x00" * 8)
+
+
+@pytest.mark.parametrize("version", [0, 1, 3, 255])
+def test_unsupported_version(version):
+    buf = MAGIC + bytes([version]) + b"\x00" * 8
+    with pytest.raises(CDBFormatError, match=f"unsupported version {version}"):
+        deserialize(buf)
+
+
+@pytest.mark.parametrize("short", [b"", b"C", b"CDB"])
+def test_truncated_header(short):
+    with pytest.raises(CDBFormatError):
+        deserialize(short)
+
+
+@pytest.mark.parametrize("char", ["\n", "\t", "\x1b", "\x7f", "\x00"])
+@pytest.mark.parametrize("position", [0, 1])
+def test_serialize_control_char_raises(char, position):
+    geo = ["ok", "ok"]
+    geo[position] = f"a{char}b"
+    with pytest.raises(ValueError):
+        serialize([], {0: tuple(geo)})
+
+
+@pytest.mark.parametrize("char", ["\n", "\t", "\x1b", "\x7f"])
+@pytest.mark.parametrize("position", [0, 1])
+def test_deserialize_control_char_raises(char, position):
+    strings = [b"ok", b"ok"]
+    strings[position] = f"a{char}b".encode()
+    buf = HEADER + struct.pack("<I", 0) + struct.pack("<I", 1) + struct.pack("<I", 0)
+    for raw in strings:
+        buf += struct.pack("<H", len(raw)) + raw
+    with pytest.raises(CDBFormatError):
+        deserialize(buf)

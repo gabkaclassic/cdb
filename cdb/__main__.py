@@ -1,5 +1,6 @@
 import argparse
 import sys
+from ipaddress import IPv4Address
 
 import maxminddb
 
@@ -30,10 +31,11 @@ def _run(args: argparse.Namespace) -> None:
     if args.command == "convert":
         mmdb_file_to_cdb(args.mmdb, args.cdb, args.locale)
     elif args.command == "lookup":
+        values = [(ip, int(IPv4Address(ip))) for ip in args.ips]
         networks, mapping = read_cdb(args.cdb)
         lines = []
-        for ip in args.ips:
-            country, city = search_geo(networks, ip, mapping)
+        for ip, value in values:
+            country, city = search_geo(networks, value, mapping)
             lines.append(f"{ip}\t{country}\t{city}\n")
         sys.stdout.write("".join(lines))
     else:

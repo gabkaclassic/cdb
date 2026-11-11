@@ -1,6 +1,6 @@
 import struct
 from collections.abc import Iterable
-from ipaddress import IPv4Address, IPv4Network, IPv6Network
+from ipaddress import IPv4Network, IPv6Network
 from typing import Any
 
 import maxminddb
@@ -8,6 +8,7 @@ import maxminddb
 __all__ = [
     "CDBFormatError",
     "MAGIC",
+    "VERSION",
     "cidr_to_int",
     "deserialize",
     "merge_cdbs",
@@ -22,7 +23,8 @@ __all__ = [
     "write_cdb",
 ]
 
-MAGIC = b"CDB\x02"
+MAGIC = b"CDB"
+VERSION = 2
 
 Triple = tuple[int, int, int]
 Mapping = dict[int, tuple[str, str]]
@@ -42,17 +44,19 @@ def cidr_to_int(cidr: str, with_broadcast: bool = True) -> int | tuple[int, int]
     network = IPv4Network(cidr, strict=False)
 
     if with_broadcast:
-        return int(IPv4Address(network.network_address)), int(
-            IPv4Address(network.broadcast_address)
-        )
+        return int(network.network_address), int(network.broadcast_address)
     else:
-        return int(IPv4Address(network.network_address))
+        return int(network.network_address)
 
 
 def mmdb_file_to_cdb(mmdb_path: str, cdb_path: str, locale: str = "en") -> None:
     with maxminddb.open_database(mmdb_path) as reader:
         cdb_data, mapping = mmdb_to_cdb(reader, locale=locale)
     write_cdb(cdb_data, mapping, cdb_path)
+
+
+def _has_control(text: str) -> bool:
+    return any(ord(c) < 0x20 or ord(c) == 0x7F for c in text)
 
 
 def _name(section: dict[str, Any], locale: str) -> str:
@@ -88,10 +92,17 @@ def mmdb_to_cdb(
             _name(data.get("city", {}), locale),
         )
 
+        if geo == ("", ""):
+            continue
+
         if geo not in mapping:
             mapping[geo] = next_id
             next_id += 1
-        prepared.append((*cidr_to_int(str(ip)), mapping[geo]))
+        if isinstance(ip, IPv4Network):
+            bounds = int(ip.network_address), int(ip.broadcast_address)
+        else:
+            bounds = cidr_to_int(str(ip))
+        prepared.append((*bounds, mapping[geo]))
 
     return _coalesce(sorted(prepared)), {v: k for k, v in mapping.items()}
 
@@ -99,11 +110,13 @@ def mmdb_to_cdb(
 def serialize(triples: Iterable[Triple], mapping: Mapping) -> bytes:
     ordered = sorted(triples)
     try:
-        parts = [MAGIC, struct.pack("<I", len(ordered))]
+        parts = [MAGIC, bytes([VERSION]), struct.pack("<I", len(ordered))]
         for a, b, c in ordered:
             parts.append(struct.pack("<III", a, b, c))
         parts.append(struct.pack("<I", len(mapping)))
         for geo_id, (country, city) in sorted(mapping.items()):
+            if _has_control(country) or _has_control(city):
+                raise ValueError("control character in name")
             b1, b2 = country.encode(), city.encode()
             parts.append(struct.pack("<I", geo_id))
             parts.append(struct.pack("<H", len(b1)) + b1)
@@ -123,8 +136,10 @@ def _read_string(buf: bytes, off: int) -> tuple[str, int]:
 
 
 def deserialize(buf: bytes) -> tuple[list[Triple], Mapping]:
-    if buf[:4] != MAGIC:
+    if buf[:3] != MAGIC or len(buf) < 4:
         raise CDBFormatError("bad magic")
+    if buf[3] != VERSION:
+        raise CDBFormatError(f"unsupported version {buf[3]}")
     try:
         off = 4
         (n,) = struct.unpack_from("<I", buf, off)
@@ -143,6 +158,8 @@ def deserialize(buf: bytes) -> tuple[list[Triple], Mapping]:
             off += 4
             country, off = _read_string(buf, off)
             city, off = _read_string(buf, off)
+            if _has_control(country) or _has_control(city):
+                raise CDBFormatError("control character in name")
             mapping[geo_id] = (country, city)
     except struct.error as e:
         raise CDBFormatError("truncated data") from e
@@ -191,7 +208,9 @@ def merge_cdbs(*filepaths: str) -> tuple[list[Triple], Mapping]:
     for filepath in filepaths:
         current_networks, current_mapping = read_cdb(filepath)
         for a, b, old_id in current_networks:
-            geo = current_mapping[old_id]
+            geo = current_mapping.get(old_id)
+            if geo is None:
+                raise CDBFormatError(f"{filepath}: unknown geo id {old_id}")
             if geo in reverse_mapping:
                 new_id = reverse_mapping[geo]
             else:
@@ -215,5 +234,6 @@ def read_cdb(filepath: str) -> tuple[list[Triple], Mapping]:
 
 
 def write_cdb(ips: Iterable[Triple], mapping: Mapping, filepath: str) -> None:
+    data = serialize(ips, mapping)
     with open(filepath, "wb") as file:
-        file.write(serialize(ips, mapping))
+        file.write(data)

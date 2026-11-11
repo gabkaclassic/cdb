@@ -1,7 +1,7 @@
 import pytest
 import os
 from tempfile import NamedTemporaryFile
-from cdb import read_cdb, write_cdb, merge_cdbs, merge_cdbs_and_save
+from cdb import CDBFormatError, read_cdb, write_cdb, merge_cdbs, merge_cdbs_and_save
 
 
 @pytest.fixture
@@ -125,3 +125,10 @@ def test_merge_and_save_matches_merge_and_is_deterministic(create_test_file, tmp
     assert out1.read_bytes() == out2.read_bytes()
     os.unlink(file1)
     os.unlink(file2)
+
+
+def test_merge_dangling_geo_id_raises(create_test_file):
+    path = create_test_file([(10, 20, 5)], {0: ("Country1", "City1")})
+    with pytest.raises(CDBFormatError, match=path):
+        merge_cdbs(path)
+    os.unlink(path)

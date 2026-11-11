@@ -85,3 +85,12 @@ def test_write_cdb_special_characters():
         assert result_mapping[0] == ("Страна", "Город")
     finally:
         os.unlink(tmp_path)
+
+
+def test_write_cdb_value_error_keeps_existing_file(tmp_path):
+    path = tmp_path / "a.cdb"
+    write_cdb([(1, 2, 0)], {0: ("a", "b")}, str(path))
+    before = path.read_bytes()
+    with pytest.raises(ValueError):
+        write_cdb([(1, 2, 0)], {0: ("a\nb", "b")}, str(path))
+    assert path.read_bytes() == before
